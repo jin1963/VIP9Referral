@@ -18,16 +18,16 @@ interface IPancakeRouter {
     ) external;
 }
 
-contract KJCReferralStaker {
+contract VIP9ReferralStaker {
     IERC20 public usdt;
-    IERC20 public kjc;
+    IERC20 public vip9;
     IPancakeRouter public router;
     address public owner;
 
     uint public constant STAKE_DURATION = 180 days;
     uint public constant CLAIM_INTERVAL = 3 days;
     uint public constant APY = 5;
-    uint public constant MIN_REF_CLAIM = 10 * 1e18; // Assuming KJC has 18 decimals
+    uint public constant MIN_REF_CLAIM = 10 * 1e18; // Assuming VIP9 has 18 decimals
     uint public constant COOLDOWN = 60;
 
     mapping(address => address) public referrerOf;
@@ -38,9 +38,9 @@ contract KJCReferralStaker {
     mapping(address => uint) public lastStakeTime;
     mapping(address => uint) public lastClaimReferral;
 
-    constructor(address _usdt, address _kjc, address _router) {
+    constructor(address _usdt, address _vip9, address _router) {
         usdt = IERC20(_usdt);
-        kjc = IERC20(_kjc);
+        vip9 = IERC20(_vip9);
         router = IPancakeRouter(_router);
         owner = msg.sender;
     }
@@ -67,9 +67,9 @@ contract KJCReferralStaker {
         // Corrected declaration for path array
         address[] memory path = new address[](2);
         path[0] = address(usdt);
-        path[1] = address(kjc);
+        path[1] = address(vip9);
 
-        uint balanceBefore = kjc.balanceOf(address(this));
+        uint balanceBefore = vip9.balanceOf(address(this));
         router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
             usdtAmount,
             amountOutMin,
@@ -77,23 +77,23 @@ contract KJCReferralStaker {
             address(this),
             block.timestamp + 600
         );
-        uint balanceAfter = kjc.balanceOf(address(this));
-        uint kjcReceived = balanceAfter - balanceBefore;
+        uint balanceAfter = vip9.balanceOf(address(this));
+        uint vip9Received = balanceAfter - balanceBefore;
 
         // Referral rewards
         address ref1 = referrerOf[msg.sender];
         address ref2 = referrerOf[ref1];
         address ref3 = referrerOf[ref2];
 
-        if (ref1 != address(0)) referralReward[ref1] += (kjcReceived * 10) / 100;
-        if (ref2 != address(0)) referralReward[ref2] += (kjcReceived * 3) / 100;
-        if (ref3 != address(0)) referralReward[ref3] += (kjcReceived * 2) / 100;
+        if (ref1 != address(0)) referralReward[ref1] += (vip9Received * 10) / 100;
+        if (ref2 != address(0)) referralReward[ref2] += (vip9Received * 3) / 100;
+        if (ref3 != address(0)) referralReward[ref3] += (vip9Received * 2) / 100;
 
         if (stakedAmount[msg.sender] > 0) {
             _claimStaking(msg.sender);
         }
 
-        stakedAmount[msg.sender] += kjcReceived;
+        stakedAmount[msg.sender] += vip9Received;
         stakeStart[msg.sender] = block.timestamp;
         lastClaim[msg.sender] = block.timestamp;
         lastStakeTime[msg.sender] = block.timestamp;
@@ -105,7 +105,7 @@ contract KJCReferralStaker {
 
         uint amount = referralReward[msg.sender];
         require(amount >= MIN_REF_CLAIM, "Too little to claim");
-        require(kjc.balanceOf(address(this)) >= amount, "Not enough KJC in contract for referral"); // More specific error message
+        require(kjc.balanceOf(address(this)) >= amount, "Not enough vip9 in contract for referral"); // More specific error message
 
         referralReward[msg.sender] = 0;
         lastClaimReferral[msg.sender] = block.timestamp;
@@ -123,7 +123,7 @@ contract KJCReferralStaker {
         uint timePassed = block.timestamp - lastClaim[user];
         uint reward = (stakedAmount[user] * APY * timePassed) / (365 days * 100);
 
-        require(kjc.balanceOf(address(this)) >= reward, "Not enough KJC in contract for staking reward"); // More specific error message
+        require(vip9.balanceOf(address(this)) >= reward, "Not enough vip9 in contract for staking reward"); // More specific error message
 
         lastClaim[user] = block.timestamp;
         require(kjc.transfer(user, reward), "Staking reward failed");
@@ -140,8 +140,8 @@ contract KJCReferralStaker {
         stakeStart[msg.sender] = 0;
         lastClaim[msg.sender] = 0;
 
-        require(kjc.balanceOf(address(this)) >= amount, "Not enough KJC in contract to withdraw stake"); // More specific error message
-        require(kjc.transfer(msg.sender, amount), "Withdraw failed");
+        require(vip9.balanceOf(address(this)) >= amount, "Not enough vip9 in contract to withdraw stake"); // More specific error message
+        require(vip9.transfer(msg.sender, amount), "Withdraw failed");
     }
 
     function getClaimable(address user) external view returns (uint) {
