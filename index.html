@@ -126,7 +126,7 @@ contract VIP9ReferralStaker {
         require(vip9.balanceOf(address(this)) >= reward, "Not enough vip9 in contract for staking reward"); // More specific error message
 
         lastClaim[user] = block.timestamp;
-        require(kjc.transfer(user, reward), "Staking reward failed");
+        require(vip9.transfer(user, reward), "Staking reward failed");
     }
 
     function withdrawStake() external {
