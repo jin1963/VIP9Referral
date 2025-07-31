@@ -1,0 +1,157 @@
+/ SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+interface IERC20 {
+    function transfer(address to, uint amount) external returns (bool);
+    function transferFrom(address from, address to, uint amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint);
+    function approve(address spender, uint value) external returns (bool);
+}
+
+interface IPancakeRouter {
+    function swapExactTokensForTokensSupportingFeeOnTransferTokens(
+        uint amountIn,
+        uint amountOutMin,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external;
+}
+
+contract KJCReferralStaker {
+    IERC20 public usdt;
+    IERC20 public kjc;
+    IPancakeRouter public router;
+    address public owner;
+
+    uint public constant STAKE_DURATION = 180 days;
+    uint public constant CLAIM_INTERVAL = 3 days;
+    uint public constant APY = 5;
+    uint public constant MIN_REF_CLAIM = 10 * 1e18; // Assuming KJC has 18 decimals
+    uint public constant COOLDOWN = 60;
+
+    mapping(address => address) public referrerOf;
+    mapping(address => uint) public stakedAmount;
+    mapping(address => uint) public stakeStart;
+    mapping(address => uint) public lastClaim;
+    mapping(address => uint) public referralReward;
+    mapping(address => uint) public lastStakeTime;
+    mapping(address => uint) public lastClaimReferral;
+
+    constructor(address _usdt, address _kjc, address _router) {
+        usdt = IERC20(_usdt);
+        kjc = IERC20(_kjc);
+        router = IPancakeRouter(_router);
+        owner = msg.sender;
+    }
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Not owner");
+        _;
+    }
+
+    function setReferrer(address ref) external {
+        require(ref != msg.sender, "Cannot refer yourself");
+        require(referrerOf[msg.sender] == address(0), "Already set");
+        require(referrerOf[ref] != msg.sender, "Circular ref not allowed");
+        referrerOf[msg.sender] = ref;
+    }
+
+    function buyAndStake(uint usdtAmount, uint amountOutMin) external {
+        require(tx.origin == msg.sender, "Contract bots not allowed");
+        require(block.timestamp > lastStakeTime[msg.sender] + COOLDOWN, "Cooldown active");
+
+        require(usdt.transferFrom(msg.sender, address(this), usdtAmount), "USDT transfer failed");
+        usdt.approve(address(router), usdtAmount);
+
+        // Corrected declaration for path array
+        address[] memory path = new address[](2);
+        path[0] = address(usdt);
+        path[1] = address(kjc);
+
+        uint balanceBefore = kjc.balanceOf(address(this));
+        router.swapExactTokensForTokensSupportingFeeOnTransferTokens(
+            usdtAmount,
+            amountOutMin,
+            path,
+            address(this),
+            block.timestamp + 600
+        );
+        uint balanceAfter = kjc.balanceOf(address(this));
+        uint kjcReceived = balanceAfter - balanceBefore;
+
+        // Referral rewards
+        address ref1 = referrerOf[msg.sender];
+        address ref2 = referrerOf[ref1];
+        address ref3 = referrerOf[ref2];
+
+        if (ref1 != address(0)) referralReward[ref1] += (kjcReceived * 10) / 100;
+        if (ref2 != address(0)) referralReward[ref2] += (kjcReceived * 3) / 100;
+        if (ref3 != address(0)) referralReward[ref3] += (kjcReceived * 2) / 100;
+
+        if (stakedAmount[msg.sender] > 0) {
+            _claimStaking(msg.sender);
+        }
+
+        stakedAmount[msg.sender] += kjcReceived;
+        stakeStart[msg.sender] = block.timestamp;
+        lastClaim[msg.sender] = block.timestamp;
+        lastStakeTime[msg.sender] = block.timestamp;
+    }
+
+    function claimReferralReward() external {
+        require(tx.origin == msg.sender, "Contract bots not allowed");
+        require(block.timestamp > lastClaimReferral[msg.sender] + CLAIM_INTERVAL, "Claim too soon");
+
+        uint amount = referralReward[msg.sender];
+        require(amount >= MIN_REF_CLAIM, "Too little to claim");
+        require(kjc.balanceOf(address(this)) >= amount, "Not enough KJC in contract for referral"); // More specific error message
+
+        referralReward[msg.sender] = 0;
+        lastClaimReferral[msg.sender] = block.timestamp;
+        require(kjc.transfer(msg.sender, amount), "Referral claim failed");
+    }
+
+    function claimStakingReward() external {
+        _claimStaking(msg.sender);
+    }
+
+    function _claimStaking(address user) internal {
+        require(stakedAmount[user] > 0, "Nothing staked");
+        require(block.timestamp >= lastClaim[user] + CLAIM_INTERVAL, "Wait for interval");
+
+        uint timePassed = block.timestamp - lastClaim[user];
+        uint reward = (stakedAmount[user] * APY * timePassed) / (365 days * 100);
+
+        require(kjc.balanceOf(address(this)) >= reward, "Not enough KJC in contract for staking reward"); // More specific error message
+
+        lastClaim[user] = block.timestamp;
+        require(kjc.transfer(user, reward), "Staking reward failed");
+    }
+
+    function withdrawStake() external {
+        require(block.timestamp >= stakeStart[msg.sender] + STAKE_DURATION, "Still locked");
+        uint amount = stakedAmount[msg.sender];
+        require(amount > 0, "Nothing to withdraw");
+
+        _claimStaking(msg.sender); // Claim any pending staking rewards before withdrawal
+
+        stakedAmount[msg.sender] = 0;
+        stakeStart[msg.sender] = 0;
+        lastClaim[msg.sender] = 0;
+
+        require(kjc.balanceOf(address(this)) >= amount, "Not enough KJC in contract to withdraw stake"); // More specific error message
+        require(kjc.transfer(msg.sender, amount), "Withdraw failed");
+    }
+
+    function getClaimable(address user) external view returns (uint) {
+        if (stakedAmount[user] == 0) return 0; // If nothing staked, no claimable
+        if (block.timestamp < lastClaim[user] + CLAIM_INTERVAL) return 0;
+        uint timePassed = block.timestamp - lastClaim[user];
+        return (stakedAmount[user] * APY * timePassed) / (365 days * 100);
+    }
+
+    function canWithdraw(address user) external view returns (bool) {
+        return stakedAmount[user] > 0 && block.timestamp >= stakeStart[user] + STAKE_DURATION;
+    }
+}
